@@ -6,6 +6,7 @@
 library(mixtools)
 library(Rcpp)
 #### input data ####
+original_dir <- getwd()
 args=commandArgs(trailingOnly = TRUE)
 del.use=read.table("del.txt",header = T,stringsAsFactors = F,sep = "\t")
 input=read.csv(file = args[1],stringsAsFactors = F,sep = "\t")[,c(1,as.integer(args[2]))]
@@ -342,8 +343,9 @@ correlation_computation=function(dat.use1){
 }
 cor_final_all=correlation_computation(dat.use1)
 #### correlation significance ####
+gene_description <- file.path(original_dir, '1-s2.0-S0092867414003420-mmc1.csv')
 correlation_significance=function(cor_final_all){
-  clus = read.csv("../1-s2.0-S0092867414003420-mmc1.csv",header = T,stringsAsFactors = F) #functional clustering and functional description of the mutants
+  clus = read.csv(gene_description, header = T,stringsAsFactors = F) #functional clustering and functional description of the mutants
   cor_final=cor_final_all[[1]]
   for (i in 1:nrow(cor_final)) {
     row.names(cor_final)[i] = strsplit(row.names(cor_final)[i],"[.]")[[1]][1]
@@ -414,7 +416,7 @@ correlation_significance(cor_final_all)
 #### manhatten like plot ####
 cor.global=read.delim("./cor_global_only.txt",header = T,stringsAsFactors = F)
 cor.local=read.delim("./cor_local_only.txt",header = T,stringsAsFactors = F)
-clus = read.csv("../1-s2.0-S0092867414003420-mmc1.csv",header = T,stringsAsFactors = F) #functional clustering and functional description of the mutants
+clus = read.csv(gene_description, header = T,stringsAsFactors = F) #functional clustering and functional description of the mutants
 atr=clus[clus$gene%in%union(cor.global[,1],cor.local[,1]),]
 dat.global=merge(cor.global,atr[c(1,2,4)],by= "gene")
 dat.global$logP=-log10(dat.global$pvalue)
@@ -437,3 +439,31 @@ axis(2)
 abline(h = summary(dat.global$logP)[5],col="red")
 abline(h = summary(dat.local$logP)[5],col="blue")
 dev.off()
+
+#enrichment test-global (top20)
+GO_result_global=c()
+for (i in 1:length(goterm)) {
+  m=length(unique(sgd[sgd$V5==goterm[i],3]))
+  k=length(cor.global[order(cor.global[,3])[1:20],1])
+  x=length(intersect(k,m))
+  n=length(union(cor.global[,1],cor.local[,1]))-m
+  p.val = phyper(x,m,n,k,lower.tail = F)
+  pre=c(goterm[i],p.val)
+  GO_result_global=rbind(GO_result_global,pre)
+}
+colnames(GO_result_global)=c("GO_term","p.value")
+write.table(GO_result_global,file = "./GO_result_global.txt",quote = F,row.names = F)
+
+#enrichment test-local (top20)
+GO_result_local=c()
+for (i in 1:length(goterm)) {
+  m=length(unique(sgd[sgd$V5==goterm[i],3]))
+  k=length(cor.local[order(cor.local[,3])[1:20],1])
+  x=length(intersect(k,m))
+  n=length(union(cor.global[,1],cor.local[,1]))-m
+  p.val = phyper(x,m,n,k,lower.tail = F)
+  pre=c(goterm[i],p.val)
+  GO_result_local=rbind(GO_result_local,pre)
+}
+colnames(GO_result_local)=c("GO_term","p.value")
+write.table(GO_result_local,file = "./GO_result_local.txt",quote = F,row.names = F)
