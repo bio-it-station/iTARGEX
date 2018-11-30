@@ -1,0 +1,11 @@
+# ignore settings and cache
+*.json
+.ipynb_checkpoints
+.vscode
+
+# ignore everything in output dir
+output/*/*
+
+# correlated gene list and manhatten_like_plot
+!output/*/cor_*_only.txt
+!output/*/manhatten_like_plot_*.png
