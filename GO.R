@@ -1,10 +1,15 @@
 #### GO enrichment analysis (hypergeometric test) ####
-cor.global=read.delim("./cor_global_only.txt",header = T,stringsAsFactors = F)
-cor.local=read.delim("./cor_local_only.txt",header = T,stringsAsFactors = F)
-sgd=read.delim("~/gene_association.sgd",header = F,stringsAsFactors = F,sep = "\t",quote = "")
+args=commandArgs(trailingOnly = TRUE)
+input_and_output_dir <- args[1]
+cor.global.file <- file.path(input_and_output_dir, "cor_global_only.txt")
+cor.local.file <- file.path(input_and_output_dir, "cor_local_only.txt")
+
+cor.global=read.delim(cor.global.file, header = T,stringsAsFactors = F)
+cor.local=read.delim(cor.global.file, header = T,stringsAsFactors = F)
+sgd=read.delim("./gene_association.sgd", header = F,stringsAsFactors = F,sep = "\t",quote = "")
 goterm=unique(sgd$V5)
 
-
+setwd(input_and_output_dir)
 #enrichment test-global (top20)
 GO_result_global=c()
 for (i in 1:length(goterm)) {
@@ -33,4 +38,3 @@ for (i in 1:length(goterm)) {
 }
 colnames(GO_result_local)=c("GO_term","p.value")
 write.table(GO_result_local,file = "./GO_result_local.txt",quote = F,row.names = F)
-
