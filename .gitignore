@@ -9,3 +9,4 @@ output/*/*
 # correlated gene list and manhatten_like_plot
 !output/*/cor_*_only.txt
 !output/*/manhatten_like_plot_*.png
+!output/*/GO_result_*.txt
