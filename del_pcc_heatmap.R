@@ -23,12 +23,13 @@ dev.off()
 # Plot heatmap
 library(pheatmap)
 breaksList = seq(0, 2, by = 0.2)
-col <- colorRampPalette(c("brown", "red", "yellow", "white"))(length(breaksList))
+col <- colorRampPalette(c("red", "white", "white", "blue"))(length(breaksList) - 1)
 
 png(filename = "./output/del_arr_heatmap.png", width = 25, height = 25, units = "cm", res = 300)
 pheatmap(mat = cor_mat[linkage$order, linkage$order], col = col,
          cluster_rows = FALSE, cluster_cols = FALSE,
          show_rownames = FALSE, show_colnames = FALSE,
          cellwidth = 0.9, cellheight = 0.9,
-         breaks = breaksList)
+         breaks = breaksList,
+         legend_breaks = c(0, 1, 2), legend_labels = c("Pos cor", "no cor", "Neg cor"))
 dev.off()
