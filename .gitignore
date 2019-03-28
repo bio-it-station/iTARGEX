@@ -1,6 +1,5 @@
 # ignore everything
 *
-output/*/weight*.csv
 
 # markdown, python, R
 !*.md
@@ -12,3 +11,6 @@ output/*/weight*.csv
 # correlated gene list and manhatten_like_plot
 !output/*
 !output/*/*
+
+# ignore weight table
+output/*/weight*.csv
