@@ -10,6 +10,7 @@
 
 # correlated gene list and manhatten_like_plot
 !output/*
-!output/*/cor_*_only.txt
-!output/*/manhatten_like_plot_*.png
-!output/*/GO_result_*.txt
+!output/*/*
+
+# ignore weight table
+output/*/weight*.csv
