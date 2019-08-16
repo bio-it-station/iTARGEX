@@ -11,14 +11,24 @@ library(doParallel)
 
 #### function of mixture regression(model II) ####
 regmixEM <- function (y, x, lambda = NULL, beta = NULL, sigma = NULL, k = 2,
-                      addintercept = TRUE, epsilon = 1e-08, maxit = 10000, verb = FALSE) {
+                      addintercept = TRUE, arbmean = TRUE, arbvar = TRUE, epsilon = 1e-08, maxit = 1000, verb = FALSE) {
+    if (arbmean == FALSE && arbvar == FALSE) {
+        stop(paste("Must change constraints on beta and/or sigma!","\n"))
+    }
+    
+    #### TCH save initial value
+        beta.init <- beta
+        lambda.init <- lambda
+    ####
+    
     s <- sigma
     if (addintercept) {
         x <- cbind(1, x)
     }
     n <- length(y)
     p <- ncol(x)
-    tmp <- regmix.init(y = y, x = x, lambda = lambda, beta = beta, s = s, k = k, addintercept = addintercept, arbmean = TRUE, arbvar = TRUE)
+    tmp <- regmix.init(y = y, x = x, lambda = lambda, beta = beta, s = s, k = k,
+                       addintercept = addintercept, arbmean = arbmean, arbvar = arbvar)
     lambda <- tmp$lambda
     beta <- tmp$beta
     s <- tmp$s
@@ -27,6 +37,9 @@ regmixEM <- function (y, x, lambda = NULL, beta = NULL, sigma = NULL, k = 2,
     iter <- 0
     xbeta <- x %*% beta
     res <- (y - xbeta) ^ 2
+    if (arbmean == FALSE) {
+        res <- sapply(1: k, function(i) res)
+    }
     comp <- t((lambda / sqrt(2 * pi * s ^ 2)) * t(exp(-t(t(res) / (2 * s ^ 2)))))
     obsloglik <- sum(log(apply(comp, 1, sum)))
     ll <- obsloglik
@@ -51,48 +64,73 @@ regmixEM <- function (y, x, lambda = NULL, beta = NULL, sigma = NULL, k = 2,
         ###########################################################################
         
         ######################  revise C++ code   #################################
-        cppFunction('
-                    NumericMatrix cpp_for(int n, int k, NumericVector lamda, NumericVector s, NumericMatrix res, NumericMatrix z) {
-                    int i, j, h;
-                    double shit;
-                    for (i = 0; i < n; ++i) {
-                    for (j = 0; j < k; ++j) {
+        cppFunction(
+            '
+            NumericMatrix cpp_for(int n, int k, NumericVector lambda, NumericVector s, NumericMatrix res, NumericMatrix z, int arbvar) {
+            int i, j, h;
+            double shit;
+            for (i = 0; i < n; ++i) {
+                for (j = 0; j < k; ++j) {
                     shit = 0.0;
                     for (h = 0; h < k; ++h) {
-                    shit = shit + (lamda[h] / lamda[j]) * (s[j] / s[h]) * exp(-0.5 * ((1 / pow(s[h], 2)) * res(i, h) - (1 / pow(s[j], 2)) * res(i, j)));
+                        shit += (lambda[h] / lambda[j]) * (s[j * arbvar] / s[h * arbvar]) * exp(-0.5 * ((1 / pow(s[h * arbvar], 2)) * res(i, h) - (1 / pow(s[j * arbvar], 2)) * res(i, j)));
                     }
                     z(i, j) = 1 / shit;
-                    }
-                    }
-                    return z;
-                    }
-                    ')
+                }
+            }
+            return z;
+            }
+            '
+        )
         
-        z <- cpp_for(n, k, lambda, s, res, z)
+        z <- cpp_for(n, k, lambda, s, res, z, arbvar)
         ###########################################################################
         z <- z / apply(z, 1, sum)
         lambda.new <- apply(z, 2, mean)
+        
         if (sum(lambda.new < 1e-08) > 0 || is.na(sum(lambda.new))) {
             sing <- 1
         }
         else {
-            if (addintercept) {
-                lm.out <- lapply(1: k, function(i) lm(y ~ x[, -1], weights = z[, i]))
+            if (arbmean == FALSE) {
+                if (addintercept) {
+                    beta.new <- lm(y ~ x[, -1], weights = apply(t(t(z) / (s ^ 2)), 1, sum))$coef
+                }
+                else {
+                    beta.new <- lm(y ~ x - 1, weights = apply(t(t(z) / (s ^ 2)), 1, sum))$coef
+                }
             }
             else {
-                lm.out <- lapply(1: k, function(i) lm(y ~ x - 1, weights = z[, i]))
+                if (addintercept) {
+                    lm.out <- lapply(1: k, function(i) lm(y ~ x[, -1], weights = z[, i]))
+                }
+                else {
+                    lm.out <- lapply(1: k, function(i) lm(y ~ x - 1, weights = z[, i]))
+                }
+                
+                beta.new <- sapply(lm.out, coef)
+                #### wylai set beta_2
+                # beta.new[, 2] <- c(0, 0)
+                ####
+                
             }
-            beta.new <- sapply(lm.out, coef)
-            
             xbeta.new <- x %*% beta.new
             res <- (y - xbeta.new) ^ 2
-            s.new <- sqrt(sapply(1: k, function(i) sum(z[, i] * (res[, i]))/sum(z[, i])))
+            if (arbmean == FALSE){
+                res <- sapply(1: k, function(i) res)
+            }
+            if (arbvar) {
+                s.new <- sqrt(sapply(1: k, function(i) sum(z[, i] * (res[, i])) / sum(z[, i])))
+            }
+            else {
+                s.new <- sqrt(sum(z * res) / n)
+            }
             lambda <- lambda.new
             beta <- beta.new
             xbeta <- x %*% beta
             s <- s.new
             sing <- sum(s < 1e-08)
-            comp <- lapply(1: k, function(i) lambda[i] * dnorm(y, xbeta[, i], s[i]))
+            comp <- lapply(1: k, function(i) lambda[i] * dnorm(y, xbeta[, i * arbmean + (1 - arbmean)], s[i * arbvar + (1 - arbvar)]))
             comp <- sapply(comp, cbind)
             compsum <- apply(comp, 1, sum)
             newobsloglik <- sum(log(compsum))
@@ -100,10 +138,14 @@ regmixEM <- function (y, x, lambda = NULL, beta = NULL, sigma = NULL, k = 2,
         if (sing > 0 || is.na(newobsloglik) || newobsloglik < obsloglik || abs(newobsloglik) == Inf) {
             cat("Need new starting values due to singularity...", "\n")
             restarts <- restarts + 1
-            if (restarts > 15) {
+            if (restarts > 5) {
                 stop("Too many tries!")
             }
-            tmp <- regmix.init(y = y, x = x, k = k, addintercept = addintercept, arbmean = TRUE, arbvar = TRUE)
+            
+            #### TCH Using previosly saved initial value to start a new round
+            tmp <- regmix.init(y = y, x = x, k = k, lambda = lambda, beta = beta, addintercept = addintercept, arbmean = arbmean, arbvar = arbvar)
+            ####
+            
             lambda <- tmp$lambda
             beta <- tmp$beta
             s <- tmp$s
@@ -112,6 +154,9 @@ regmixEM <- function (y, x, lambda = NULL, beta = NULL, sigma = NULL, k = 2,
             iter <- 0
             xbeta <- x %*% beta
             res <- (y - xbeta) ^ 2
+            if (arbmean == FALSE){
+                res <- sapply(1: k, function(i) res)
+            }
             comp <- t((lambda / sqrt(2 * pi * s ^ 2)) * t(exp(-t(t(res) / (2 * s ^ 2)))))
             obsloglik <- sum(log(apply(comp, 1, sum)))
             ll <- obsloglik
@@ -130,30 +175,52 @@ regmixEM <- function (y, x, lambda = NULL, beta = NULL, sigma = NULL, k = 2,
     
     scale.order <- order(s)
     sigma.min <- min(s)
+    conv <- "Y"
     if (iter == maxit) {
         cat("WARNING! NOT CONVERGENT!", "\n")
+        conv <- "N"
     }
     cat("number of iterations=", iter, "\n")
     if (addintercept == FALSE) {
         beta <- rbind(0, beta)
         p = p + 1
     }
-    rownames(beta) <- c(paste("beta", 0: (p - 1), sep = ""))
-    colnames(beta) <- c(paste("comp", 1: k, sep = ""))
-    colnames(z) <- c(paste("comp", 1: k, sep = ""))
-    a <- list(x = x,
-              y = y,
-              lambda = lambda,
-              beta = beta,
-              sigma = s,
-              loglik = obsloglik,
-              posterior = z,
-              all.loglik = ll,
-              restarts = restarts,
-              ft = "regmixEM")
+    if (arbmean == FALSE) {
+        z <- z[, scale.order]
+        names(beta) <- c(paste0("beta", 0: (p - 1)))
+        colnames(z) <- c(paste0("comp", 1: k))
+        a <- list(x = x,
+                  y = y,
+                  lambda = lambda[scale.order],
+                  beta = beta,
+                  sigma = sigma.min,
+                  scale = s[scale.order] / sigma.min,
+                  loglik = obsloglik,
+                  posterior = z[, scale.order],
+                  all.loglik = ll,
+                  restarts = restarts,
+                  conv = conv,
+                  ft = "regmixEM")
+    }
+    else {
+        rownames(beta) <- c(paste0("beta", 0: (p - 1)))
+        colnames(beta) <- c(paste0("comp", 1: k))
+        colnames(z) <- c(paste0("comp", 1: k))
+        a <- list(x = x,
+                  y = y,
+                  lambda = lambda,
+                  beta = beta,
+                  sigma = s,
+                  loglik = obsloglik,
+                  posterior = z,
+                  all.loglik = ll,
+                  restarts = restarts,
+                  conv = conv,
+                  ft = "regmixEM")
+    }
     class(a) = "mixEM"
     a
-    }
+}
 
 #### function of model selection ####
 regmixmodel.sel.wy <- function (x, y, k = 2) {
@@ -171,18 +238,22 @@ regmixmodel.sel.wy <- function (x, y, k = 2) {
             beta_pval <- summary(a)$coef[2, 4]
             loglik <- sum(log(dnorm(y, mean = beta[1, ] + as.matrix(x) %*% beta[2: nrow(beta), ], sd = sd(a$res))))
             emout <- list(beta = beta, sigma = sd(a$res), lambda = 1, loglik = loglik)
-            global_param <- data.frame(cbind(emout$beta[1,], emout$beta[2,], beta_pval, emout$sigma))
-            colnames(global_param) <- c("int", "beta", "beta_pval", "sigma")
+            r <- cor(x, y)
+            global_param <- data.frame(cbind(emout$beta[1,], emout$beta[2,], beta_pval, emout$sigma, r))
+            colnames(global_param) <- c("int", "beta", "pval", "sigma", "cor")
         }
         else {
-            emout <- regmixEM(y, x, k = i)
+            beta <- matrix(as.numeric(global_param[c(1, 2)]), nrow = 2, ncol = 1)
+            beta <- cbind(beta, c(0, 0))
+            emout <- regmixEM(y, x, beta = beta, k = i)
         }
         bic[i] <- emout$loglik - log(n) * (p(emout) - 1) / 2
     }
     
     bic_df <- t(data.frame(bic, row.names = c("global", "local")))
     local_param <- data.frame(do.call(cbind, Map(cbind, emout$lambda, emout$beta[1,], emout$beta[2,], emout$sigma)))
-    colnames(local_param) <- c("lambda_1", "int_1", "beta_1", "sigma_1", "lambda_2", "int_2", "beta_2", "sigma_2")
+    local_param <- cbind(local_param, emout$conv)
+    colnames(local_param) <- c("lambda_1", "int_1", "beta_1", "sigma_1", "lambda_2", "int_2", "beta_2", "sigma_2", "conv")
     weight_comp1 <- t(as.data.frame(emout$posterior[, 1]))
     weight_comp2 <- t(as.data.frame(emout$posterior[, 2]))
     
@@ -193,18 +264,19 @@ regmixmodel.sel.wy <- function (x, y, k = 2) {
 }
 
 #### function for combine the results from parallel EM ####
-comb <- function(x, ...) {  
+comb <- function(x, ...) {
     mapply(rbind, x, ..., SIMPLIFY = FALSE)
 }
 
 #### input data ####
 args <- commandArgs(trailingOnly = TRUE) # Input 2 arguments. return vector with (input, output)
-# args <- c('./input/rep_time.txt', './output/no_intercept') # test input (comment out after test)
+# args <- c('./sim_190807/sim_x.csv', './sim_190807/output', './sim_190807/sim_y.csv') # test input (comment out after test)
 
-del_array <- fread(file = "./input/del.txt", sep = "\t", nThread = 2) # deletion array
+# del_array <- fread(file = "./input/del.csv", nThread = 2) # deletion array
+del_array <- fread(file = args[3], nThread = 2)
 # del_array <- read.csv(file = "./sim/sim_y.csv") # simulated deletion array
 
-input <- read.csv(file = args[1], sep = "\t") # trait data
+input <- read.csv(file = args[1]) # trait data
 dat.use <- merge(input, del_array, by = "ID") # merge data (deletion array and trait data)
 dat.use <- na.omit(dat.use)
 dat.use[, 2] <- scale(dat.use[, 2])
@@ -213,7 +285,7 @@ dat.use[, 2] <- scale(dat.use[, 2])
 output_dir <- args[2]
 dir.create(file.path(output_dir)) # create the directory for saving raw outputs
 
-cl <- makeCluster(4)
+cl <- makeCluster(10)
 registerDoParallel(cl)
 
 results <- foreach(i = 3: length(dat.use),
@@ -223,10 +295,6 @@ results <- foreach(i = 3: length(dat.use),
 # for(i in 3: length(dat.use)){
     # set.seed(10)
     em <- regmixmodel.sel.wy(x = dat.use[, 2], y = dat.use[, i], k = 2) # EM and Model selection
-    # if (abs(model_select$EM_param[3, 1]) < abs(model_select$EM_param[3, 2])) { # Switch comp1 with larger slope one
-    #     model_select$EM_param <- model_select$EM_param[c(2, 1)]
-    #     colnames(model_select$EM_param) <- c("comp1", "comp2")
-    # }
     
     # Output files
     rownames(em$bic_df) <- colnames(dat.use)[i]
@@ -241,10 +309,6 @@ results <- foreach(i = 3: length(dat.use),
                    "weight_comp1" = em$weight_comp1,
                    "weight_comp2" = em$weight_comp2)
     
-    # filename <- file.path(output_dir, "raw_output", colnames(dat.use)[i])
-    # write.csv(model_select$model_select, file = paste0(filename, "_model_select.csv"), quote = F) # model selection for each mutant
-    # write.csv(model_select$EM_param, file = paste0(filename, "_param.csv"), quote = F) # model II parameters
-    # fwrite(model_select$weight, file = paste0(filename, "_weight.csv"), quote = F, nThread = 1) # posterior probabilities from model II
     return(result)
 }
 
@@ -252,9 +316,11 @@ stopCluster(cl)
 
 # Apply Bonferroni correction to global beta p-value
 global_param <- results[["global_param"]]
-pval_adj_df <- p.adjust(global_param[, 3], method = "bonferroni")
+pval_adj_df <- p.adjust(global_param[, "pval"], method = "bonferroni")
 global_param['adj_pval'] <- pval_adj_df
-global_param <- global_param[order(global_param$beta_pval), ]
+logp_df <- sapply(global_param[, 'adj_pval'], log10) * (-1) # apply -log10 transformation to dataframe
+logp_df[is.infinite(logp_df)] <- 350 # Set the p-value with infinite value to 350
+global_param[, 'adj_pval'] <- logp_df
 
 write.csv(results[["bic_df"]], file = file.path(output_dir, "bic_df.csv"), quote = F) # model selection for each mutant
 write.csv(global_param, file = file.path(output_dir, "global_param.csv"), quote = F) # model I parameters
