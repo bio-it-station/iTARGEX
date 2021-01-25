@@ -5,7 +5,7 @@ This is git repo for iTARGEX. iTARGEX is a program help biological researcher to
 First, you need to install R enviroment in your computer. iTARGEX utlized Rcpp to accelerate the numerical calculation, so you need to install C++ compiler (e.g. gcc, clang). Next, you can install R package dependency with the following command.
 
 ```R
-pkgs <- c("data.table", "docopt", "doParallel", "foreach", "mixtools", "Rcpp", "scales")
+pkgs <- c("data.table", "docopt", "doParallel", "foreach", "mixtools", "Rcpp", "scales", "weights")
 install.packages(pkgs)
 ```
 
